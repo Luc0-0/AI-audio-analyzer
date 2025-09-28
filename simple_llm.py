@@ -1,8 +1,13 @@
 # simple_llm.py
 
+import logging
 from transformers import pipeline
+from config import config
 
-def summarize_text(text: str, model: str = "facebook/bart-large-cnn") -> str:
+# Cache summarizer models
+_summarizer_cache = {}
+
+def summarize_text(text: str, model: str = config.SUMMARIZER_MODEL) -> str:
     """
     Summarize transcript into shorter text.
 
@@ -13,15 +18,26 @@ def summarize_text(text: str, model: str = "facebook/bart-large-cnn") -> str:
     Returns:
         str: Summary
     """
-    # Load model only once
-    global summarizer
-    if "summarizer" not in globals():
-        summarizer = pipeline("summarization", model=model)
+    try:
+        if model not in _summarizer_cache:
+            logging.info(f"Loading summarization model: {model}")
+            _summarizer_cache[model] = pipeline("summarization", model=model)
 
-    # HuggingFace models have max token limits → chunk if too long
-    if len(text.split()) > 700:  
-        chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
-        summaries = [summarizer(chunk, max_length=150, min_length=50, do_sample=False)[0]["summary_text"] for chunk in chunks]
-        return " ".join(summaries)
-    else:
-        return summarizer(text, max_length=150, min_length=50, do_sample=False)[0]["summary_text"]
+        summarizer = _summarizer_cache[model]
+
+        # Approximate token limit (BART models ~1024 tokens)
+        words = text.split()
+        if len(words) > 500:  # Conservative word limit
+            # Chunk by words, approximately 400 words per chunk
+            chunk_size = 400
+            chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+            summaries = []
+            for chunk in chunks:
+                summary = summarizer(chunk, max_length=config.SUMMARY_MAX_LENGTH, min_length=config.SUMMARY_MIN_LENGTH, do_sample=False)[0]["summary_text"]
+                summaries.append(summary)
+            return " ".join(summaries)
+        else:
+            return summarizer(text, max_length=config.SUMMARY_MAX_LENGTH, min_length=config.SUMMARY_MIN_LENGTH, do_sample=False)[0]["summary_text"]
+    except Exception as e:
+        logging.error(f"Error during summarization: {e}")
+        raise
